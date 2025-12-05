@@ -301,6 +301,14 @@ def image_to_data_uri(image_bytes: Optional[bytes], mime: Optional[str]) -> Opti
     return f"data:{mime};base64,{encoded}"
 
 
+def rerun_app():
+    """Streamlit rerun helper for legacy/newer versions."""
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:  # pragma: no cover - older Streamlit fallback
+        st.experimental_rerun()
+
+
 def refresh_work_statuses(session, producer_id: Optional[int] = None) -> None:
     today = dt.date.today()
     query = session.query(Work).filter(Work.schedule_end < today, Work.status == "live")
@@ -399,7 +407,7 @@ def render_login():
             if user:
                 st.session_state["user"] = {"id": user.id, "role": user.role, "name": user.name}
                 st.success("로그인 성공")
-                st.experimental_rerun()
+                rerun_app()
             else:
                 st.error("로그인 정보를 확인해주세요.")
     st.info("기본 계정 - 관리자: admin@example.com / admin123, 제작사: producer@example.com / producer123")
@@ -471,7 +479,7 @@ def render_work_management(user: User):
                             work.poster_mime = poster_file.type
                         session.add(work)
                     st.success("등록 요청이 전송되었습니다. 관리자 승인 후 노출됩니다.")
-                    st.experimental_rerun()
+                    rerun_app()
 
     live_tab, history_tab = st.tabs(["운영중 / 대기", "히스토리"])
     with live_tab:
@@ -523,7 +531,7 @@ def render_work_management(user: User):
                                     )
                                     session.add(revision)
                                 st.success("수정 요청이 접수되었습니다. 관리자 검수 후 적용됩니다.")
-                                st.experimental_rerun()
+                                rerun_app()
     with history_tab:
         history = [w for w in works if w.status == "history"]
         if not history:
@@ -731,7 +739,7 @@ def render_admin_approvals():
                         current.status = "live" if decision == "승인" else "rejected"
                         current.reviewer_note = note
                 st.success("처리 완료")
-                st.experimental_rerun()
+                rerun_app()
 
     st.subheader("수정 요청")
     if not pending_revisions:
@@ -764,7 +772,7 @@ def render_admin_approvals():
                                     work.poster_image = base64.b64decode(payload["poster_image"])
                                     work.poster_mime = payload.get("poster_mime")
                 st.success("수정 요청을 처리했습니다.")
-                st.experimental_rerun()
+                rerun_app()
 
     st.subheader("DM 승인 대기")
     with session_scope() as session:
@@ -790,7 +798,7 @@ def render_admin_approvals():
                             record.status = "rejected"
                         record.reviewer_note = note
                 st.success("DM 요청을 처리했습니다.")
-                st.experimental_rerun()
+                rerun_app()
 
 def render_admin_dm_monitor():
     st.header("DM 모니터링")
@@ -824,7 +832,7 @@ def main():
     if not user:
         st.error("세션이 만료되었습니다. 다시 로그인해주세요.")
         st.session_state.pop("user", None)
-        st.experimental_rerun()
+        rerun_app()
         return
     if user.role == "producer":
         render_producer_portal(user)
