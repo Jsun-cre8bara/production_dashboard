@@ -708,7 +708,7 @@ def render_campaigns(user: User):
         campaigns = (
             session.query(DMCampaign)
             .filter(DMCampaign.producer_id == user.id)
-            .options(joinedload(DMCampaign.work))
+            .options(joinedload(DMCampaign.work), joinedload(DMCampaign.logs))
             .order_by(DMCampaign.created_at.desc())
             .all()
         )
