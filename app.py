@@ -854,7 +854,25 @@ def render_admin_approvals():
             st.markdown(f"- 작품: {campaign.work.title if campaign.work else '-'}")
             st.write(campaign.body)
             filters = json.loads(campaign.target_filters or "{}")
-            st.json(filters)
+            filter_labels = {
+                "age_range": "연령대",
+                "genders": "성별",
+                "view_range": "기간 관람수",
+                "start_date": "기간 시작",
+                "end_date": "기간 종료",
+                "purchase_types": "구매 형태",
+            }
+            rows = []
+            for key, label in filter_labels.items():
+                value = filters.get(key)
+                if value is None:
+                    continue
+                display = value
+                if isinstance(value, list):
+                    display = ", ".join(str(v) for v in value)
+                rows.append({"조건": label, "설정값": display})
+            if rows:
+                st.table(pd.DataFrame(rows))
             decision = st.selectbox("결정", ["승인", "반려"], key=f"dm_decision_{campaign.id}")
             note = st.text_area("코멘트", key=f"dm_note_{campaign.id}")
             if st.button("DM 처리", key=f"dm_btn_{campaign.id}"):
