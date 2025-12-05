@@ -323,6 +323,15 @@ def _format_display_value(value: Optional[str]) -> str:
     return str(value)
 
 
+def _format_date_string(value: Optional[str]) -> str:
+    if not value:
+        return "-"
+    try:
+        return dt.date.fromisoformat(str(value)).strftime("%Y%m%d")
+    except ValueError:
+        return str(value)
+
+
 def refresh_work_statuses(session, producer_id: Optional[int] = None) -> None:
     today = dt.date.today()
     query = session.query(Work).filter(Work.schedule_end < today, Work.status == "live")
@@ -854,25 +863,48 @@ def render_admin_approvals():
             st.markdown(f"- 작품: {campaign.work.title if campaign.work else '-'}")
             st.write(campaign.body)
             filters = json.loads(campaign.target_filters or "{}")
-            filter_labels = {
-                "age_range": "연령대",
-                "genders": "성별",
-                "view_range": "기간 관람수",
-                "start_date": "기간 시작",
-                "end_date": "기간 종료",
-                "purchase_types": "구매 형태",
-            }
             rows = []
-            for key, label in filter_labels.items():
-                value = filters.get(key)
-                if value is None:
-                    continue
-                display = value
-                if isinstance(value, list):
-                    display = ", ".join(str(v) for v in value)
-                rows.append({"조건": label, "설정값": display})
+            age = filters.get("age_range")
+            if age:
+                rows.append({"조건": "연령대", "설정값": f"{age[0]}~{age[1]}세"})
+            genders = filters.get("genders")
+            if genders:
+                rows.append({"조건": "성별", "설정값": ", ".join(genders)})
+            view_range = filters.get("view_range")
+            if view_range:
+                rows.append({"조건": "기간 관람수", "설정값": f"{view_range[0]}~{view_range[1]}회"})
+            start = _format_date_string(filters.get("start_date"))
+            end = _format_date_string(filters.get("end_date"))
+            if start != "-" or end != "-":
+                rows.append({"조건": "기간", "설정값": f"{start} ~ {end}"})
+            purchases = filters.get("purchase_types")
+            if purchases:
+                rows.append({"조건": "구매 형태", "설정값": ", ".join(purchases)})
             if rows:
                 st.table(pd.DataFrame(rows))
+            st.caption(f"예상 수신자 수: {campaign.expected_recipients}명")
+            audience_ids = json.loads(campaign.target_audience_ids or "[]")
+            with st.expander("타겟 관객 리스트 보기", expanded=False):
+                st.caption(f"총 {len(audience_ids)}명")
+                if audience_ids:
+                    with session_scope() as session:
+                        members = (
+                            session.query(AudienceMember)
+                            .filter(AudienceMember.id.in_(audience_ids))
+                            .all()
+                        )
+                    data = [
+                        {
+                            "이름": member.full_name,
+                            "이메일": member.email,
+                            "성별": member.gender,
+                            "나이": member.age,
+                        }
+                        for member in members
+                    ]
+                    st.dataframe(pd.DataFrame(data))
+                else:
+                    st.info("대상 관객이 없습니다.")
             decision = st.selectbox("결정", ["승인", "반려"], key=f"dm_decision_{campaign.id}")
             note = st.text_area("코멘트", key=f"dm_note_{campaign.id}")
             if st.button("DM 처리", key=f"dm_btn_{campaign.id}"):
