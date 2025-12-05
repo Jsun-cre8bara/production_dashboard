@@ -169,6 +169,41 @@ class DMSendLog(Base):
 
     campaign = relationship("DMCampaign", back_populates="logs")
 
+
+class ProducerSignupRequest(Base):
+    __tablename__ = "producer_signup_requests"
+
+    id = Column(Integer, primary_key=True)
+    company_name = Column(String(255), nullable=False)
+    business_registration = Column(String(120), nullable=False)
+    contact_name = Column(String(255), nullable=False)
+    contact_email = Column(String(255), nullable=False)
+    contact_phone = Column(String(120), nullable=False)
+    website = Column(String(255))
+    sns_handle = Column(String(255), nullable=False)
+    sns_profile_url = Column(String(500))
+    sns_proof_image = Column(LargeBinary)
+    sns_proof_mime = Column(String(50))
+    password_hash = Column(String(128), nullable=False)
+    password_salt = Column(String(32), nullable=False)
+    status = Column(String(50), default="pending")
+    admin_note = Column(Text)
+    created_at = Column(DateTime, server_default=func.now())
+    decided_at = Column(DateTime)
+
+
+class PasswordResetRequest(Base):
+    __tablename__ = "password_reset_requests"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False)
+    company_name = Column(String(255))
+    contact_phone = Column(String(120))
+    message = Column(Text)
+    status = Column(String(50), default="pending")
+    created_at = Column(DateTime, server_default=func.now())
+    resolved_at = Column(DateTime)
+
 def _hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
     salt = salt or secrets.token_hex(8)
     digest = hashlib.sha256(f"{salt}{password}".encode("utf-8")).hexdigest()
@@ -192,6 +227,20 @@ def _create_user(
         role=role,
         name=name,
         company_name=company_name,
+    )
+    session.add(user)
+    session.flush()
+    return user
+
+
+def _create_user_from_signup(session, signup: ProducerSignupRequest) -> User:
+    user = User(
+        email=signup.contact_email.lower(),
+        password_hash=signup.password_hash,
+        password_salt=signup.password_salt,
+        role="producer",
+        name=signup.contact_name,
+        company_name=signup.company_name,
     )
     session.add(user)
     session.flush()
@@ -421,19 +470,106 @@ def summarize_purchase_types(
 def render_login():
     st.title("제작사 대시보드")
     st.caption("Streamlit + SQLAlchemy 기반 DM 타겟팅 시스템")
-    with st.form("login_form"):
-        email = st.text_input("이메일")
-        password = st.text_input("비밀번호", type="password")
-        submitted = st.form_submit_button("로그인")
-        if submitted:
-            user = authenticate(email, password)
-            if user:
-                st.session_state["user"] = {"id": user.id, "role": user.role, "name": user.name}
-                st.success("로그인 성공")
-                rerun_app()
-            else:
-                st.error("로그인 정보를 확인해주세요.")
+    tab_login, tab_signup, tab_reset = st.tabs(["로그인", "제작사 회원가입", "비밀번호 찾기"])
+    with tab_login:
+        with st.form("login_form"):
+            email = st.text_input("이메일")
+            password = st.text_input("비밀번호", type="password")
+            submitted = st.form_submit_button("로그인")
+            if submitted:
+                user = authenticate(email, password)
+                if user:
+                    st.session_state["user"] = {"id": user.id, "role": user.role, "name": user.name}
+                    st.success("로그인 성공")
+                    rerun_app()
+                else:
+                    st.error("로그인 정보를 확인해주세요.")
+    with tab_signup:
+        render_signup_form()
+    with tab_reset:
+        render_password_reset_form()
     st.info("기본 계정 - 관리자: admin@example.com / admin123, 제작사: producer@example.com / producer123")
+
+
+def render_signup_form():
+    st.subheader("제작사 계정 신청")
+    with st.form("signup_form"):
+        company_name = st.text_input("회사명", help="사업자등록증 기준 공식 명칭")
+        business_reg = st.text_input("사업자등록번호")
+        contact_name = st.text_input("담당자 이름")
+        contact_email = st.text_input("담당자 이메일")
+        contact_phone = st.text_input("담당자 연락처")
+        website = st.text_input("공식 웹사이트 / 예매 페이지 URL")
+        sns_handle = st.text_input("관리자 SNS 계정 ID", help="예: instagram.com/yourtheater")
+        sns_profile_url = st.text_input("SNS 프로필 URL")
+        sns_proof = st.file_uploader("SNS 인증 캡처 (필수)", type=["png", "jpg", "jpeg"])
+        password = st.text_input("비밀번호", type="password")
+        password_confirm = st.text_input("비밀번호 확인", type="password")
+        agree = st.checkbox("개인정보 수집 및 이용에 동의합니다.")
+        submitted = st.form_submit_button("가입 신청")
+        if submitted:
+            if not all([company_name, business_reg, contact_name, contact_email, contact_phone, sns_handle]):
+                st.error("필수 정보를 모두 입력해주세요.")
+            elif not sns_proof:
+                st.error("SNS 인증 캡처 이미지를 업로드해주세요.")
+            elif password != password_confirm or not password:
+                st.error("비밀번호를 다시 확인해주세요.")
+            elif not agree:
+                st.error("개인정보 처리에 동의해야 신청이 가능합니다.")
+            else:
+                with session_scope() as session:
+                    existing_user = session.query(User).filter(User.email == contact_email.lower()).first()
+                    existing_request = (
+                        session.query(ProducerSignupRequest)
+                        .filter(
+                            ProducerSignupRequest.contact_email == contact_email.lower(),
+                            ProducerSignupRequest.status == "pending",
+                        )
+                        .first()
+                    )
+                    if existing_user or existing_request:
+                        st.error("이미 등록된 이메일입니다. 관리자에게 문의해주세요.")
+                        return
+                    hashed, salt = _hash_password(password)
+                    request = ProducerSignupRequest(
+                        company_name=company_name,
+                        business_registration=business_reg,
+                        contact_name=contact_name,
+                        contact_email=contact_email.lower(),
+                        contact_phone=contact_phone,
+                        website=website,
+                        sns_handle=sns_handle,
+                        sns_profile_url=sns_profile_url,
+                        sns_proof_image=sns_proof.getvalue(),
+                        sns_proof_mime=sns_proof.type,
+                        password_hash=hashed,
+                        password_salt=salt,
+                    )
+                    session.add(request)
+                st.success("신청이 접수되었습니다. 관리자 승인 후 이메일로 안내드립니다.")
+
+
+def render_password_reset_form():
+    st.subheader("비밀번호 찾기 / 초기화 요청")
+    with st.form("reset_form"):
+        email = st.text_input("등록된 이메일")
+        company_name = st.text_input("회사명")
+        contact_phone = st.text_input("연락처")
+        message = st.text_area("요청 내용", help="본인 확인이 가능한 SNS 링크나 추가 정보를 적어주세요.")
+        submitted = st.form_submit_button("요청 전송")
+        if submitted:
+            if not email:
+                st.error("이메일을 입력해주세요.")
+            else:
+                with session_scope() as session:
+                    request = PasswordResetRequest(
+                        email=email.lower(),
+                        company_name=company_name,
+                        contact_phone=contact_phone,
+                        message=message,
+                    )
+                    session.add(request)
+                st.success("비밀번호 초기화 요청이 접수되었습니다. 관리자가 확인 후 연락드립니다.")
 
 
 def get_current_user(session) -> Optional[User]:
@@ -762,6 +898,39 @@ def render_admin_approvals():
             .options(joinedload(WorkRevision.work))
             .all()
         )
+        signup_requests = session.query(ProducerSignupRequest).filter(ProducerSignupRequest.status == "pending").all()
+        reset_requests = session.query(PasswordResetRequest).filter(PasswordResetRequest.status == "pending").all()
+
+    st.subheader("제작사 가입 요청")
+    if not signup_requests:
+        st.caption("대기중인 가입 요청이 없습니다.")
+    for request in signup_requests:
+        with st.expander(f"{request.company_name} / {request.contact_email}", expanded=False):
+            st.markdown(f"- 담당자: {request.contact_name} ({request.contact_phone})")
+            st.markdown(f"- 사업자등록번호: {request.business_registration}")
+            st.markdown(f"- 사이트: {request.website or '-'}")
+            st.markdown(f"- SNS: {request.sns_handle} ({request.sns_profile_url or '-'})")
+            if request.sns_proof_image:
+                st.image(image_to_data_uri(request.sns_proof_image, request.sns_proof_mime), caption="SNS 인증 캡처")
+            signup_decision = st.selectbox(
+                "결정",
+                options=["승인", "반려"],
+                key=f"signup_decision_{request.id}",
+            )
+            signup_note = st.text_area("코멘트", key=f"signup_note_{request.id}")
+            if st.button("가입 요청 처리", key=f"signup_btn_{request.id}"):
+                with session_scope() as session:
+                    req = session.query(ProducerSignupRequest).get(request.id)
+                    if req:
+                        if signup_decision == "승인":
+                            _create_user_from_signup(session, req)
+                            req.status = "approved"
+                        else:
+                            req.status = "rejected"
+                        req.admin_note = signup_note
+                        req.decided_at = dt.datetime.utcnow()
+                st.success("처리 완료")
+                rerun_app()
 
     st.subheader("신규 작품 승인")
     if not pending_works:
@@ -917,6 +1086,23 @@ def render_admin_approvals():
                             record.status = "rejected"
                         record.reviewer_note = note
                 st.success("DM 요청을 처리했습니다.")
+                rerun_app()
+
+    st.subheader("비밀번호 찾기 요청")
+    if not reset_requests:
+        st.caption("대기중인 비밀번호 요청이 없습니다.")
+    for request in reset_requests:
+        with st.expander(f"{request.email} 요청 #{request.id}", expanded=False):
+            st.markdown(f"- 회사명: {request.company_name or '-'}")
+            st.markdown(f"- 연락처: {request.contact_phone or '-'}")
+            st.write(request.message or "요청 메시지가 없습니다.")
+            if st.button("처리 완료", key=f"reset_btn_{request.id}"):
+                with session_scope() as session:
+                    req = session.query(PasswordResetRequest).get(request.id)
+                    if req:
+                        req.status = "resolved"
+                        req.resolved_at = dt.datetime.utcnow()
+                st.success("요청을 완료 처리했습니다.")
                 rerun_app()
 
 def render_admin_dm_monitor():
