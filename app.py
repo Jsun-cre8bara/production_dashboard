@@ -180,7 +180,7 @@ class ProducerSignupRequest(Base):
     contact_email = Column(String(255), nullable=False)
     contact_phone = Column(String(120), nullable=False)
     website = Column(String(255))
-    sns_handle = Column(String(255), nullable=False)
+    sns_handle = Column(String(255))
     sns_profile_url = Column(String(500))
     sns_proof_image = Column(LargeBinary)
     sns_proof_mime = Column(String(50))
@@ -493,25 +493,20 @@ def render_login():
 
 def render_signup_form():
     st.subheader("제작사 계정 신청")
+    st.caption("입력된 이메일·연락처로 실명 인증을 진행합니다. 정확한 정보를 입력해주세요.")
     with st.form("signup_form"):
         company_name = st.text_input("회사명", help="사업자등록증 기준 공식 명칭")
         business_reg = st.text_input("사업자등록번호")
         contact_name = st.text_input("담당자 이름")
-        contact_email = st.text_input("담당자 이메일")
-        contact_phone = st.text_input("담당자 연락처")
-        website = st.text_input("공식 웹사이트 / 예매 페이지 URL")
-        sns_handle = st.text_input("관리자 SNS 계정 ID", help="예: instagram.com/yourtheater")
-        sns_profile_url = st.text_input("SNS 프로필 URL")
-        sns_proof = st.file_uploader("SNS 인증 캡처 (필수)", type=["png", "jpg", "jpeg"])
+        contact_email = st.text_input("담당자 이메일", help="해당 이메일로 인증 링크가 발송됩니다.")
+        contact_phone = st.text_input("담당자 연락처", help="SMS 패스코드 발송 예정")
         password = st.text_input("비밀번호", type="password")
         password_confirm = st.text_input("비밀번호 확인", type="password")
         agree = st.checkbox("개인정보 수집 및 이용에 동의합니다.")
         submitted = st.form_submit_button("가입 신청")
         if submitted:
-            if not all([company_name, business_reg, contact_name, contact_email, contact_phone, sns_handle]):
+            if not all([company_name, business_reg, contact_name, contact_email, contact_phone]):
                 st.error("필수 정보를 모두 입력해주세요.")
-            elif not sns_proof:
-                st.error("SNS 인증 캡처 이미지를 업로드해주세요.")
             elif password != password_confirm or not password:
                 st.error("비밀번호를 다시 확인해주세요.")
             elif not agree:
@@ -537,11 +532,6 @@ def render_signup_form():
                         contact_name=contact_name,
                         contact_email=contact_email.lower(),
                         contact_phone=contact_phone,
-                        website=website,
-                        sns_handle=sns_handle,
-                        sns_profile_url=sns_profile_url,
-                        sns_proof_image=sns_proof.getvalue(),
-                        sns_proof_mime=sns_proof.type,
                         password_hash=hashed,
                         password_salt=salt,
                     )
@@ -908,10 +898,7 @@ def render_admin_approvals():
         with st.expander(f"{request.company_name} / {request.contact_email}", expanded=False):
             st.markdown(f"- 담당자: {request.contact_name} ({request.contact_phone})")
             st.markdown(f"- 사업자등록번호: {request.business_registration}")
-            st.markdown(f"- 사이트: {request.website or '-'}")
-            st.markdown(f"- SNS: {request.sns_handle} ({request.sns_profile_url or '-'})")
-            if request.sns_proof_image:
-                st.image(image_to_data_uri(request.sns_proof_image, request.sns_proof_mime), caption="SNS 인증 캡처")
+            st.caption("이메일·연락처로 별도 인증을 진행해야 합니다.")
             signup_decision = st.selectbox(
                 "결정",
                 options=["승인", "반려"],
