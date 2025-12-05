@@ -40,7 +40,13 @@ def _normalize_database_url(raw_url: Optional[str]) -> str:
 
 DATABASE_URL = _normalize_database_url(os.getenv("DATABASE_URL"))
 engine = create_engine(DATABASE_URL, future=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+SessionLocal = sessionmaker(
+    bind=engine,
+    autoflush=False,
+    autocommit=False,
+    expire_on_commit=False,  # keep objects usable after session closes
+    future=True,
+)
 Base = declarative_base()
 
 
