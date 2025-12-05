@@ -315,6 +315,14 @@ def rerun_app():
         st.experimental_rerun()
 
 
+def _format_display_value(value: Optional[str]) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, (dt.date, dt.datetime)):
+        return value.isoformat()
+    return str(value)
+
+
 def refresh_work_statuses(session, producer_id: Optional[int] = None) -> None:
     today = dt.date.today()
     query = session.query(Work).filter(Work.schedule_end < today, Work.status == "live")
@@ -770,8 +778,41 @@ def render_admin_approvals():
     for revision in pending_revisions:
         payload = json.loads(revision.payload)
         with st.expander(f"{revision.work.title} 수정 요청 #{revision.id}", expanded=False):
-            st.write("제출 내용:")
-            st.json(payload)
+            field_labels = {
+                "title": "제목",
+                "genre": "장르",
+                "description": "설명",
+                "schedule_start": "시작일",
+                "schedule_end": "종료일",
+            }
+            changes = []
+            for field, label in field_labels.items():
+                requested = payload.get(field)
+                current = getattr(revision.work, field, None)
+                if requested is None and current is None:
+                    continue
+                display_requested = requested
+                if field in ("schedule_start", "schedule_end") and requested:
+                    try:
+                        display_requested = dt.date.fromisoformat(requested).isoformat()
+                    except ValueError:
+                        pass
+                changes.append(
+                    {
+                        "필드": label,
+                        "기존 값": _format_display_value(current),
+                        "요청 값": display_requested or "-",
+                    }
+                )
+            if changes:
+                st.table(pd.DataFrame(changes))
+            else:
+                st.info("텍스트 변경 사항이 없습니다.")
+            encoded_poster = payload.get("poster_image")
+            if encoded_poster:
+                st.image(image_to_data_uri(base64.b64decode(encoded_poster), payload.get("poster_mime")))
+            if revision.submitter_note:
+                st.caption(f"제작사 메모: {revision.submitter_note}")
             decision = st.selectbox("결정", options=["승인", "반려"], key=f"rev_decision_{revision.id}")
             note = st.text_area("코멘트", key=f"rev_note_{revision.id}")
             if st.button("처리", key=f"rev_btn_{revision.id}"):
