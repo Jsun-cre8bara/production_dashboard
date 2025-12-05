@@ -193,8 +193,9 @@ def _create_user(
 
 
 def _ensure_seed_data(session) -> None:
-    if not session.query(User).filter_by(role="admin").first():
-        _create_user(
+    admin = session.query(User).filter_by(email="admin@example.com").first()
+    if not admin:
+        admin = _create_user(
             session,
             email="admin@example.com",
             password="admin123",
@@ -202,7 +203,8 @@ def _ensure_seed_data(session) -> None:
             name="관리자",
         )
 
-    if not session.query(User).filter_by(role="producer").first():
+    producer = session.query(User).filter_by(email="producer@example.com").first()
+    if not producer:
         producer = _create_user(
             session,
             email="producer@example.com",
@@ -211,6 +213,8 @@ def _ensure_seed_data(session) -> None:
             name="샘플 제작사",
             company_name="샘플 컴퍼니",
         )
+
+    if producer and not session.query(Work).filter(Work.producer_id == producer.id).first():
         work = Work(
             producer_id=producer.id,
             title="샘플 뮤지컬",
