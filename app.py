@@ -840,7 +840,12 @@ def render_admin_approvals():
 
     st.subheader("DM 승인 대기")
     with session_scope() as session:
-        pending_dm = session.query(DMCampaign).filter(DMCampaign.status == "pending_review").all()
+        pending_dm = (
+            session.query(DMCampaign)
+            .filter(DMCampaign.status == "pending_review")
+            .options(joinedload(DMCampaign.work))
+            .all()
+        )
 
     if not pending_dm:
         st.caption("대기중인 DM 캠페인이 없습니다.")
