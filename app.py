@@ -890,7 +890,12 @@ def render_admin_approvals():
 def render_admin_dm_monitor():
     st.header("DM 모니터링")
     with session_scope() as session:
-        campaigns = session.query(DMCampaign).order_by(DMCampaign.created_at.desc()).all()
+        campaigns = (
+            session.query(DMCampaign)
+            .options(joinedload(DMCampaign.producer), joinedload(DMCampaign.work))
+            .order_by(DMCampaign.created_at.desc())
+            .all()
+        )
     if not campaigns:
         st.info("DM 캠페인이 없습니다.")
         return
