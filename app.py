@@ -24,7 +24,7 @@ from sqlalchemy import (
     create_engine,
     func,
 )
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker, joinedload
 
 
 PURCHASE_TYPES = ["지정", "비지정", "초대", "기타"]
@@ -700,7 +700,7 @@ def render_campaigns(user: User):
         campaigns = (
             session.query(DMCampaign)
             .filter(DMCampaign.producer_id == user.id)
-            .options(relationship(DMCampaign.work).lazyload())
+            .options(joinedload(DMCampaign.work))
             .order_by(DMCampaign.created_at.desc())
             .all()
         )
@@ -733,8 +733,18 @@ def render_campaigns(user: User):
 def render_admin_approvals():
     st.header("승인 센터")
     with session_scope() as session:
-        pending_works = session.query(Work).filter(Work.status == "pending_review").all()
-        pending_revisions = session.query(WorkRevision).filter(WorkRevision.status == "pending").all()
+        pending_works = (
+            session.query(Work)
+            .filter(Work.status == "pending_review")
+            .options(joinedload(Work.producer))
+            .all()
+        )
+        pending_revisions = (
+            session.query(WorkRevision)
+            .filter(WorkRevision.status == "pending")
+            .options(joinedload(WorkRevision.work))
+            .all()
+        )
 
     st.subheader("신규 작품 승인")
     if not pending_works:
