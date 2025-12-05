@@ -57,6 +57,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False)
     name = Column(String(255), nullable=False)
     company_name = Column(String(255))
+    producer_code = Column(String(120), unique=True)
     role = Column(String(50), nullable=False)
     password_hash = Column(String(128), nullable=False)
     password_salt = Column(String(32), nullable=False)
@@ -175,10 +176,13 @@ class ProducerSignupRequest(Base):
 
     id = Column(Integer, primary_key=True)
     company_name = Column(String(255), nullable=False)
+    producer_code = Column(String(120), nullable=False)
     business_registration = Column(String(120), nullable=False)
     contact_name = Column(String(255), nullable=False)
     contact_email = Column(String(255), nullable=False)
     contact_phone = Column(String(120), nullable=False)
+    representative_name = Column(String(255), nullable=False)
+    representative_phone = Column(String(120), nullable=False)
     website = Column(String(255))
     sns_handle = Column(String(255))
     sns_profile_url = Column(String(500))
@@ -218,6 +222,7 @@ def _create_user(
     role: str,
     name: str,
     company_name: Optional[str] = None,
+    producer_code: Optional[str] = None,
 ) -> User:
     hashed, salt = _hash_password(password)
     user = User(
@@ -227,6 +232,7 @@ def _create_user(
         role=role,
         name=name,
         company_name=company_name,
+        producer_code=producer_code,
     )
     session.add(user)
     session.flush()
@@ -238,6 +244,7 @@ def _create_user_from_signup(session, signup: ProducerSignupRequest) -> User:
         email=signup.contact_email.lower(),
         password_hash=signup.password_hash,
         password_salt=signup.password_salt,
+        producer_code=signup.producer_code,
         role="producer",
         name=signup.contact_name,
         company_name=signup.company_name,
@@ -267,6 +274,7 @@ def _ensure_seed_data(session) -> None:
             role="producer",
             name="샘플 제작사",
             company_name="샘플 컴퍼니",
+            producer_code="sample-company",
         )
 
     if producer and not session.query(Work).filter(Work.producer_id == producer.id).first():
@@ -493,20 +501,36 @@ def render_login():
 
 def render_signup_form():
     st.subheader("제작사 계정 신청")
-    st.caption("입력된 이메일·연락처로 실명 인증을 진행합니다. 정확한 정보를 입력해주세요.")
+    st.caption("제작사 ID·이메일·연락처·대표자 정보로 실명 인증을 진행합니다. 정확한 정보를 입력해주세요.")
     with st.form("signup_form"):
         company_name = st.text_input("회사명", help="사업자등록증 기준 공식 명칭")
+        producer_code = st.text_input("제작사 ID", help="영문/숫자 3~30자, 고유하게 사용됩니다.")
         business_reg = st.text_input("사업자등록번호")
         contact_name = st.text_input("담당자 이름")
         contact_email = st.text_input("담당자 이메일", help="해당 이메일로 인증 링크가 발송됩니다.")
         contact_phone = st.text_input("담당자 연락처", help="SMS 패스코드 발송 예정")
+        representative_name = st.text_input("대표자 이름")
+        representative_phone = st.text_input("대표자 연락처", help="대표자 실명 인증에 활용합니다.")
         password = st.text_input("비밀번호", type="password")
         password_confirm = st.text_input("비밀번호 확인", type="password")
         agree = st.checkbox("개인정보 수집 및 이용에 동의합니다.")
         submitted = st.form_submit_button("가입 신청")
         if submitted:
-            if not all([company_name, business_reg, contact_name, contact_email, contact_phone]):
+            if not all(
+                [
+                    company_name,
+                    producer_code,
+                    business_reg,
+                    contact_name,
+                    contact_email,
+                    contact_phone,
+                    representative_name,
+                    representative_phone,
+                ]
+            ):
                 st.error("필수 정보를 모두 입력해주세요.")
+            elif not producer_code.replace("-", "").isalnum() or not (3 <= len(producer_code) <= 30):
+                st.error("제작사 ID는 영문/숫자 조합 3~30자로 입력해주세요.")
             elif password != password_confirm or not password:
                 st.error("비밀번호를 다시 확인해주세요.")
             elif not agree:
@@ -526,12 +550,31 @@ def render_signup_form():
                         st.error("이미 등록된 이메일입니다. 관리자에게 문의해주세요.")
                         return
                     hashed, salt = _hash_password(password)
+                    existing_code_user = (
+                        session.query(User)
+                        .filter(User.producer_code == producer_code.lower())
+                        .first()
+                    )
+                    existing_code_request = (
+                        session.query(ProducerSignupRequest)
+                        .filter(
+                            ProducerSignupRequest.producer_code == producer_code.lower(),
+                            ProducerSignupRequest.status == "pending",
+                        )
+                        .first()
+                    )
+                    if existing_code_user or existing_code_request:
+                        st.error("이미 사용 중인 제작사 ID입니다. 다른 ID를 입력해주세요.")
+                        return
                     request = ProducerSignupRequest(
                         company_name=company_name,
+                        producer_code=producer_code.lower(),
                         business_registration=business_reg,
                         contact_name=contact_name,
                         contact_email=contact_email.lower(),
                         contact_phone=contact_phone,
+                        representative_name=representative_name,
+                        representative_phone=representative_phone,
                         password_hash=hashed,
                         password_salt=salt,
                     )
@@ -896,7 +939,9 @@ def render_admin_approvals():
         st.caption("대기중인 가입 요청이 없습니다.")
     for request in signup_requests:
         with st.expander(f"{request.company_name} / {request.contact_email}", expanded=False):
+            st.markdown(f"- 제작사 ID: `{request.producer_code}`")
             st.markdown(f"- 담당자: {request.contact_name} ({request.contact_phone})")
+            st.markdown(f"- 대표자: {request.representative_name} ({request.representative_phone})")
             st.markdown(f"- 사업자등록번호: {request.business_registration}")
             st.caption("이메일·연락처로 별도 인증을 진행해야 합니다.")
             signup_decision = st.selectbox(
