@@ -428,6 +428,9 @@ def get_current_user(session) -> Optional[User]:
 
 def render_producer_portal(user: User):
     st.sidebar.success(f"{user.company_name or user.name} 님")
+    if st.sidebar.button("로그아웃"):
+        st.session_state.pop("user", None)
+        rerun_app()
     section = st.sidebar.radio("메뉴", ["작품 관리", "관객 타겟팅", "DM 캠페인"])
     with session_scope() as session:
         refresh_work_statuses(session, producer_id=user.id)
@@ -441,6 +444,9 @@ def render_producer_portal(user: User):
 
 def render_admin_portal(user: User):
     st.sidebar.info(f"관리자: {user.name}")
+    if st.sidebar.button("로그아웃"):
+        st.session_state.pop("user", None)
+        rerun_app()
     section = st.sidebar.radio("관리 콘솔", ["승인 센터", "DM 모니터링"])
     if section == "승인 센터":
         render_admin_approvals()
@@ -694,6 +700,7 @@ def render_campaigns(user: User):
         campaigns = (
             session.query(DMCampaign)
             .filter(DMCampaign.producer_id == user.id)
+            .options(relationship(DMCampaign.work).lazyload())
             .order_by(DMCampaign.created_at.desc())
             .all()
         )
