@@ -213,6 +213,77 @@ def _hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]
     digest = hashlib.sha256(f"{salt}{password}".encode("utf-8")).hexdigest()
     return digest, salt
 
+SIGNUP_FIELD_KEYS = [
+    "signup_company_name",
+    "signup_producer_code",
+    "signup_business_reg",
+    "signup_contact_name",
+    "signup_contact_email",
+    "signup_contact_phone",
+    "signup_representative_name",
+    "signup_representative_phone",
+    "signup_password",
+    "signup_password_confirm",
+    "signup_agree",
+]
+
+
+def _normalize_phone_number(phone: Optional[str]) -> str:
+    if not phone:
+        return ""
+    return "".join(ch for ch in phone if ch.isdigit())
+
+
+def _reset_signup_code_status() -> None:
+    st.session_state.pop("signup_code_status", None)
+    st.session_state.pop("signup_checked_code", None)
+
+
+def _reset_pass_verification_state() -> None:
+    st.session_state.pop("pass_verification", None)
+
+
+def _clear_signup_form_state() -> None:
+    for key in SIGNUP_FIELD_KEYS:
+        st.session_state.pop(key, None)
+    _reset_signup_code_status()
+    _reset_pass_verification_state()
+
+
+def initiate_pass_verification(name: str, phone: str) -> Dict[str, str]:
+    """Stub that represents connecting to the carrier PASS verification flow."""
+    request_id = secrets.token_hex(8)
+    normalized_phone = _normalize_phone_number(phone)
+    # TODO: Replace this stub with an actual PASS API integration call.
+    return {
+        "request_id": request_id,
+        "name": name,
+        "phone": normalized_phone,
+        "status": "verified",
+        "verified_at": dt.datetime.utcnow().isoformat(),
+    }
+
+
+def _is_producer_code_available(session, normalized_code: str) -> bool:
+    normalized_code = (normalized_code or "").strip().lower()
+    if not normalized_code:
+        return False
+    user_exists = (
+        session.query(User)
+        .filter(User.producer_code.isnot(None))
+        .filter(func.lower(User.producer_code) == normalized_code)
+        .first()
+    ) is not None
+    if user_exists:
+        return False
+    pending_request_exists = (
+        session.query(ProducerSignupRequest)
+        .filter(ProducerSignupRequest.status == "pending")
+        .filter(func.lower(ProducerSignupRequest.producer_code) == normalized_code)
+        .first()
+    ) is not None
+    return not pending_request_exists
+
 
 def _create_user(
     session,
@@ -478,6 +549,9 @@ def summarize_purchase_types(
 def render_login():
     st.title("제작사 대시보드")
     st.caption("Streamlit + SQLAlchemy 기반 DM 타겟팅 시스템")
+    post_signup_message = st.session_state.pop("post_signup_message", None)
+    if post_signup_message:
+        st.success(post_signup_message)
     tab_login, tab_signup, tab_reset = st.tabs(["로그인", "제작사 회원가입", "비밀번호 찾기"])
     with tab_login:
         with st.form("login_form"):
@@ -503,17 +577,89 @@ def render_signup_form():
     st.subheader("제작사 계정 신청")
     st.caption("제작사 ID·이메일·연락처·대표자 정보로 실명 인증을 진행합니다. 정확한 정보를 입력해주세요.")
     with st.form("signup_form"):
-        company_name = st.text_input("회사명", help="사업자등록증 기준 공식 명칭")
-        producer_code = st.text_input("제작사 ID", help="영문/숫자 3~30자, 고유하게 사용됩니다.")
-        business_reg = st.text_input("사업자등록번호")
-        contact_name = st.text_input("담당자 이름")
-        contact_email = st.text_input("담당자 이메일", help="해당 이메일로 인증 링크가 발송됩니다.")
-        contact_phone = st.text_input("담당자 연락처", help="SMS 패스코드 발송 예정")
-        representative_name = st.text_input("대표자 이름")
-        representative_phone = st.text_input("대표자 연락처", help="대표자 실명 인증에 활용합니다.")
-        password = st.text_input("비밀번호", type="password")
-        password_confirm = st.text_input("비밀번호 확인", type="password")
-        agree = st.checkbox("개인정보 수집 및 이용에 동의합니다.")
+        company_name = st.text_input("회사명", help="사업자등록증 기준 공식 명칭", key="signup_company_name")
+        code_col, code_btn_col = st.columns([3, 1])
+        with code_col:
+            producer_code = st.text_input(
+                "제작사 ID",
+                help="영문/숫자 3~30자, 고유하게 사용됩니다.",
+                key="signup_producer_code",
+            )
+        with code_btn_col:
+            code_check_clicked = st.form_submit_button("중복 확인", type="secondary", use_container_width=True)
+        business_reg = st.text_input("사업자등록번호", key="signup_business_reg")
+        contact_name = st.text_input("담당자 이름", key="signup_contact_name")
+        contact_email = st.text_input(
+            "담당자 이메일",
+            help="해당 이메일로 인증 링크가 발송됩니다.",
+            key="signup_contact_email",
+        )
+        contact_phone = st.text_input("담당자 연락처", help="SMS 패스코드 발송 예정", key="signup_contact_phone")
+        representative_name = st.text_input("대표자 이름", key="signup_representative_name")
+        rep_phone_col, pass_btn_col = st.columns([3, 1])
+        with rep_phone_col:
+            representative_phone = st.text_input(
+                "대표자 연락처",
+                help="대표자 실명 인증에 활용합니다.",
+                key="signup_representative_phone",
+            )
+        with pass_btn_col:
+            pass_request_clicked = st.form_submit_button("PASS 인증 요청", type="secondary", use_container_width=True)
+        password = st.text_input("비밀번호", type="password", key="signup_password")
+        password_confirm = st.text_input("비밀번호 확인", type="password", key="signup_password_confirm")
+        agree = st.checkbox("개인정보 수집 및 이용에 동의합니다.", key="signup_agree")
+
+        normalized_code = (producer_code or "").strip().lower()
+        normalized_rep_phone = _normalize_phone_number(representative_phone)
+        stored_checked_code = st.session_state.get("signup_checked_code")
+        code_status = st.session_state.get("signup_code_status")
+        if stored_checked_code and normalized_code and stored_checked_code != normalized_code:
+            _reset_signup_code_status()
+            stored_checked_code = None
+            code_status = None
+
+        pass_state = st.session_state.get("pass_verification")
+        if pass_state and (
+            pass_state.get("phone") != normalized_rep_phone
+            or pass_state.get("name") != (representative_name or "").strip()
+        ):
+            _reset_pass_verification_state()
+            pass_state = None
+
+        if code_check_clicked:
+            if not normalized_code:
+                st.warning("확인할 제작사 ID를 입력해주세요.")
+            elif not normalized_code.replace("-", "").isalnum() or not (3 <= len(normalized_code) <= 30):
+                st.warning("제작사 ID는 영문/숫자 조합 3~30자로 입력해주세요.")
+            else:
+                with session_scope() as session:
+                    is_available = _is_producer_code_available(session, normalized_code)
+                st.session_state["signup_checked_code"] = normalized_code
+                st.session_state["signup_code_status"] = "available" if is_available else "taken"
+
+        if pass_request_clicked:
+            if not representative_name or not representative_phone:
+                st.warning("대표자 이름과 연락처를 입력한 뒤 PASS 인증을 요청해주세요.")
+            else:
+                verification = initiate_pass_verification(representative_name.strip(), representative_phone)
+                st.session_state["pass_verification"] = verification
+
+        stored_checked_code = st.session_state.get("signup_checked_code")
+        code_status = st.session_state.get("signup_code_status")
+        pass_state = st.session_state.get("pass_verification")
+
+        if stored_checked_code and stored_checked_code == normalized_code and code_status == "available":
+            st.success("사용 가능한 제작사 ID입니다.")
+        elif stored_checked_code and stored_checked_code == normalized_code and code_status == "taken":
+            st.error("이미 사용 중인 제작사 ID입니다.")
+        else:
+            st.caption("가입 전, 제작사 ID 중복 여부를 확인해주세요.")
+
+        if pass_state and pass_state.get("status") == "verified":
+            st.success("PASS 본인확인이 완료되었습니다.")
+        else:
+            st.caption("대표자 PASS 인증 완료 후 가입 신청이 가능합니다.")
+
         submitted = st.form_submit_button("가입 신청")
         if submitted:
             if not all(
@@ -536,6 +682,16 @@ def render_signup_form():
             elif not agree:
                 st.error("개인정보 처리에 동의해야 신청이 가능합니다.")
             else:
+                if (
+                    st.session_state.get("signup_checked_code") != normalized_code
+                    or st.session_state.get("signup_code_status") != "available"
+                ):
+                    st.error("제작사 ID 중복 확인을 먼저 완료해주세요.")
+                    return
+                pass_state = st.session_state.get("pass_verification")
+                if not pass_state or pass_state.get("status") != "verified":
+                    st.error("PASS 본인확인을 완료해주세요.")
+                    return
                 with session_scope() as session:
                     existing_user = session.query(User).filter(User.email == contact_email.lower()).first()
                     existing_request = (
@@ -550,20 +706,7 @@ def render_signup_form():
                         st.error("이미 등록된 이메일입니다. 관리자에게 문의해주세요.")
                         return
                     hashed, salt = _hash_password(password)
-                    existing_code_user = (
-                        session.query(User)
-                        .filter(User.producer_code == producer_code.lower())
-                        .first()
-                    )
-                    existing_code_request = (
-                        session.query(ProducerSignupRequest)
-                        .filter(
-                            ProducerSignupRequest.producer_code == producer_code.lower(),
-                            ProducerSignupRequest.status == "pending",
-                        )
-                        .first()
-                    )
-                    if existing_code_user or existing_code_request:
+                    if not _is_producer_code_available(session, normalized_code):
                         st.error("이미 사용 중인 제작사 ID입니다. 다른 ID를 입력해주세요.")
                         return
                     request = ProducerSignupRequest(
@@ -579,7 +722,9 @@ def render_signup_form():
                         password_salt=salt,
                     )
                     session.add(request)
-                st.success("신청이 접수되었습니다. 관리자 승인 후 이메일로 안내드립니다.")
+                st.session_state["post_signup_message"] = "가입 신청이 접수되었습니다. 관리자 승인 후 이메일로 안내드립니다."
+                _clear_signup_form_state()
+                rerun_app()
 
 
 def render_password_reset_form():
